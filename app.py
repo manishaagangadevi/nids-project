@@ -37,7 +37,8 @@ def train_model():
         data = pd.read_csv("KDDTrain+.txt", header=None, names=col_names)
     except FileNotFoundError:
         st.error("FATAL ERROR: 'KDDTrain+.txt' not found. Please put the dataset in the same folder.")
-        return None, None, None, None
+        # Return Nones for all expected values
+        return None, None, None, None, None, None, None
 
     labels = data['label']
     features_data = data.drop(['label', 'difficulty'], axis=1)
@@ -57,8 +58,20 @@ def train_model():
     accuracy = metrics.accuracy_score(y_test, predictions)
     report = metrics.classification_report(y_test, predictions, zero_division=0, output_dict=True)
     
+    # --- NEW: Get Feature Importance ---
+    importances = ai_guard.feature_importances_
+    feature_names = features_numeric.columns
+    
+    # Create a DataFrame to hold the data
+    feature_importance_df = pd.DataFrame({
+        'feature': feature_names,
+        'importance': importances
+    }).sort_values(by='importance', ascending=False) # Sort by most important
+
+    
     # Return all the objects the dashboard will need
-    return ai_guard, X_test, y_test, predictions, accuracy, report
+    # --- NEW: Added feature_importance_df to the return statement ---
+    return ai_guard, X_test, y_test, predictions, accuracy, report, feature_importance_df
 
 # --- Main Dashboard ---
 st.header("Project Overview")
@@ -76,55 +89,78 @@ if st.button("Train AI and Run Detection Demo"):
     
     # Run the big function and show a "spinner" while it's working
     with st.spinner('Training in progress... This may take a few seconds...'):
-        # Unpack all the returned objects
+        # --- NEW: Unpack the new feature_importance_df ---
         (ai_guard, X_test, y_test, 
-         predictions, accuracy, report) = train_model()
+         predictions, accuracy, report, 
+         feature_importance_df) = train_model()
 
-    st.success("Training Complete! AI 'Guard' is now active.")
-    
-    # --- Display Results ---
-    st.header(f"Detection Accuracy: {accuracy * 100:.2f}%")
-    
-    # Create two columns for layout
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Live Demo Examples")
-        st.markdown("Random examples from the test data:")
+    # Check if training failed (e.g., file not found)
+    if ai_guard is None:
+        st.error("Training failed. Please check the error message above.")
+    else:
+        st.success("Training Complete! AI 'Guard' is now active.")
         
-        # Create a nice DataFrame for the demo
-        demo_sample = X_test.sample(15, random_state=42)
-        demo_predictions = ai_guard.predict(demo_sample)
-        demo_real_answers = y_test.loc[demo_sample.index]
+        # --- Display Results ---
+        st.header(f"Detection Accuracy: {accuracy * 100:.2f}%")
         
-        demo_df = pd.DataFrame({
-            "AI Prediction": demo_predictions,
-            "Real Answer": demo_real_answers
-        })
-        st.dataframe(demo_df) # st.dataframe is perfect for showing tables
+        # Create two columns for layout
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Live Demo Examples")
+            st.markdown("Random examples from the test data:")
+            
+            # Create a nice DataFrame for the demo
+            demo_sample = X_test.sample(15, random_state=42)
+            demo_predictions = ai_guard.predict(demo_sample)
+            demo_real_answers = y_test.loc[demo_sample.index]
+            
+            demo_df = pd.DataFrame({
+                "AI Prediction": demo_predictions,
+                "Real Answer": demo_real_answers
+            })
+            st.dataframe(demo_df) # st.dataframe is perfect for showing tables
 
-    with col2:
-        st.subheader("Detailed Classification Report")
-        # Convert the report dictionary to a DataFrame for nice display
-        report_df = pd.DataFrame(report).transpose()
-        st.dataframe(report_df)
+        with col2:
+            st.subheader("Detailed Classification Report")
+            # Convert the report dictionary to a DataFrame for nice display
+            report_df = pd.DataFrame(report).transpose()
+            st.dataframe(report_df)
 
-    # --- Display Confusion Matrix (Full Width) ---
-    st.header("Visual Report: Confusion Matrix")
-    
-    with st.spinner("Generating confusion matrix..."):
-        all_labels = sorted(list(set(y_test) | set(predictions)))
-        cm = confusion_matrix(y_test, predictions, labels=all_labels)
+        # --- Display Confusion Matrix (Full Width) ---
+        st.header("Visual Report: Confusion Matrix")
         
-        # Create a Matplotlib figure
-        fig, ax = plt.subplots(figsize=(15, 10))
-        sns.heatmap(cm, annot=True, fmt='d', xticklabels=all_labels, yticklabels=all_labels, cmap='viridis', ax=ax)
-        ax.set_title('AI NIDS Confusion Matrix')
-        ax.set_ylabel('True Label (The Real Answer)')
-        ax.set_xlabel('Predicted Label (AI\'s Guess)')
-        plt.xticks(rotation=90)
-        plt.yticks(rotation=0)
-        plt.tight_layout()
+        with st.spinner("Generating confusion matrix..."):
+            all_labels = sorted(list(set(y_test) | set(predictions)))
+            cm = confusion_matrix(y_test, predictions, labels=all_labels)
+            
+            # Create a Matplotlib figure
+            fig, ax = plt.subplots(figsize=(15, 10))
+            sns.heatmap(cm, annot=True, fmt='d', xticklabels=all_labels, yticklabels=all_labels, cmap='viridis', ax=ax)
+            ax.set_title('AI NIDS Confusion Matrix')
+            ax.set_ylabel('True Label (The Real Answer)')
+            ax.set_xlabel('Predicted Label (AI\'s Guess)')
+            plt.xticks(rotation=90)
+            plt.yticks(rotation=0)
+            plt.tight_layout()
+            
+            # This command displays the Matplotlib plot in Streamlit
+            st.pyplot(fig)
+
+        # --- NEW: Display Feature Importance ---
+        st.header("How the AI 'Thinks': Feature Importance")
+        st.markdown("""
+        This chart shows which network features the AI "learned" were the
+        most important for detecting an attack.
         
-        # This command displays the Matplotlib plot in Streamlit
-        st.pyplot(fig)
+        A high bar means the AI relies heavily on that feature to make its decision.
+        You can see it learned that features like `src_bytes` (source bytes)
+        and `service_http` are huge clues!
+        """)
+        
+        # Get the top 20 most important features
+        top_20_features = feature_importance_df.head(20)
+
+        # Plot as a bar chart
+        # We set the index to 'feature' so Streamlit uses it as the x-axis label
+        st.bar_chart(top_20_features.set_index('feature')['importance'])
