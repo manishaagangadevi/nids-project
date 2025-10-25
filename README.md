@@ -11,5 +11,13 @@ It uses a Python script (`detect.py`) and the **NSL-KDD dataset** to build an AI
 4.  **Tests** the AI on data it has never seen before and prints a report showing its accuracy.
 
 ### How to Run It
-1.  Make sure you have Python, `pandas`, and `scikit-learn`.
-2.  Run the main script: `python detect.py`
+
+This project is an interactive web app built with Streamlit.
+
+1.  Make sure you have all the libraries installed (pandas, scikit-learn, streamlit, etc.).
+2.  Open your terminal in the project folder.
+3.  Run the following command:
+
+  ```bash
+  streamlit run app.pypy`
+4. A new tab will automatically open in your web browser with the dashboard.
