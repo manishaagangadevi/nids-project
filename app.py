@@ -7,17 +7,17 @@ import time
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
+# --- FIX: Changed SMOTE to RandomOverSampler ---
+from imblearn.over_sampling import RandomOverSampler 
 
 # --- Page Setup ---
 st.set_page_config(page_title="AI NIDS Dashboard", layout="wide")
 st.title("🚀 AI Network Intrusion Detection System (NIDS)")
 
 # --- Caching the Model ---
-# This "decorator" tells Streamlit to run this function ONCE
-# and save the result. It won't re-train the model every
-# time you click a button. This is a huge time-saver.
 @st.cache_resource
-def train_model():
+# --- FIX: Renamed parameter to 'use_oversampling' for clarity ---
+def train_model(use_oversampling=False): 
     # --- 1. Data Collection & Feature Extraction ---
     col_names = [
         "duration", "protocol_type", "service", "flag", "src_bytes", "dst_bytes", 
@@ -37,7 +37,6 @@ def train_model():
         data = pd.read_csv("KDDTrain+.txt", header=None, names=col_names)
     except FileNotFoundError:
         st.error("FATAL ERROR: 'KDDTrain+.txt' not found. Please put the dataset in the same folder.")
-        # Return Nones for all expected values
         return None, None, None, None, None, None, None
 
     labels = data['label']
@@ -49,7 +48,17 @@ def train_model():
     X_train, X_test, y_train, y_test = train_test_split(
         features_numeric, labels, test_size=0.2, random_state=42
     )
-    
+
+    # --- FIX: Replaced SMOTE block with RandomOverSampler ---
+    if use_oversampling:
+        with st.spinner("Applying RandomOverSampler (photocopying rare attacks)..."):
+            # Create the RandomOverSampler
+            ros = RandomOverSampler(random_state=42)
+            # IMPORTANT: We only apply this to the *training* data, never the test data!
+            X_train, y_train = ros.fit_resample(X_train, y_train)
+            st.toast("Over-sampling applied. Training on new, balanced dataset.")
+    # --- End of fix ---
+
     ai_guard = RandomForestClassifier(n_estimators=50, random_state=42)
     ai_guard.fit(X_train, y_train)
     
@@ -58,19 +67,15 @@ def train_model():
     accuracy = metrics.accuracy_score(y_test, predictions)
     report = metrics.classification_report(y_test, predictions, zero_division=0, output_dict=True)
     
-    # --- NEW: Get Feature Importance ---
+    # --- Get Feature Importance ---
     importances = ai_guard.feature_importances_
     feature_names = features_numeric.columns
     
-    # Create a DataFrame to hold the data
     feature_importance_df = pd.DataFrame({
         'feature': feature_names,
         'importance': importances
-    }).sort_values(by='importance', ascending=False) # Sort by most important
-
+    }).sort_values(by='importance', ascending=False)
     
-    # Return all the objects the dashboard will need
-    # --- NEW: Added feature_importance_df to the return statement ---
     return ai_guard, X_test, y_test, predictions, accuracy, report, feature_importance_df
 
 # --- Main Dashboard ---
@@ -79,22 +84,32 @@ st.markdown("""
 This project demonstrates an AI-based NIDS using a **Random Forest Classifier**.
 - The AI is trained on the **NSL-KDD dataset**.
 - It learns to distinguish between 'normal' network traffic and various types of attacks.
-- Click the button below to train the AI and see the results.
 """)
+
+# --- FIX: Updated Checkbox Text ---
+st.subheader("Training Options")
+use_oversampling_checkbox = st.checkbox("Use Random Over-sampling (to fix rare attacks)")
+st.markdown("""
+*(Check this box to improve detection for **rare attacks** like 'land', 'spy', etc. 
+The AI will "photocopy" rare attacks to get more examples to learn from.)*
+""")
+# --- End of fix ---
+
 
 # Create the button
 if st.button("Train AI and Run Detection Demo"):
     
+    # --- FIX: Get value from the updated checkbox ---
+    use_oversampling_value = use_oversampling_checkbox
+    
     st.info("Loading data and training AI 'Guard'... Please wait.")
     
-    # Run the big function and show a "spinner" while it's working
     with st.spinner('Training in progress... This may take a few seconds...'):
-        # --- NEW: Unpack the new feature_importance_df ---
+        # --- FIX: Pass the new value to the function ---
         (ai_guard, X_test, y_test, 
          predictions, accuracy, report, 
-         feature_importance_df) = train_model()
+         feature_importance_df) = train_model(use_oversampling=use_oversampling_value)
 
-    # Check if training failed (e.g., file not found)
     if ai_guard is None:
         st.error("Training failed. Please check the error message above.")
     else:
@@ -103,14 +118,12 @@ if st.button("Train AI and Run Detection Demo"):
         # --- Display Results ---
         st.header(f"Detection Accuracy: {accuracy * 100:.2f}%")
         
-        # Create two columns for layout
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Live Demo Examples")
             st.markdown("Random examples from the test data:")
             
-            # Create a nice DataFrame for the demo
             demo_sample = X_test.sample(15, random_state=42)
             demo_predictions = ai_guard.predict(demo_sample)
             demo_real_answers = y_test.loc[demo_sample.index]
@@ -119,11 +132,10 @@ if st.button("Train AI and Run Detection Demo"):
                 "AI Prediction": demo_predictions,
                 "Real Answer": demo_real_answers
             })
-            st.dataframe(demo_df) # st.dataframe is perfect for showing tables
+            st.dataframe(demo_df)
 
         with col2:
             st.subheader("Detailed Classification Report")
-            # Convert the report dictionary to a DataFrame for nice display
             report_df = pd.DataFrame(report).transpose()
             st.dataframe(report_df)
 
@@ -134,7 +146,6 @@ if st.button("Train AI and Run Detection Demo"):
             all_labels = sorted(list(set(y_test) | set(predictions)))
             cm = confusion_matrix(y_test, predictions, labels=all_labels)
             
-            # Create a Matplotlib figure
             fig, ax = plt.subplots(figsize=(15, 10))
             sns.heatmap(cm, annot=True, fmt='d', xticklabels=all_labels, yticklabels=all_labels, cmap='viridis', ax=ax)
             ax.set_title('AI NIDS Confusion Matrix')
@@ -144,23 +155,14 @@ if st.button("Train AI and Run Detection Demo"):
             plt.yticks(rotation=0)
             plt.tight_layout()
             
-            # This command displays the Matplotlib plot in Streamlit
             st.pyplot(fig)
 
-        # --- NEW: Display Feature Importance ---
+        # --- Display Feature Importance ---
         st.header("How the AI 'Thinks': Feature Importance")
         st.markdown("""
         This chart shows which network features the AI "learned" were the
         most important for detecting an attack.
-        
-        A high bar means the AI relies heavily on that feature to make its decision.
-        You can see it learned that features like `src_bytes` (source bytes)
-        and `service_http` are huge clues!
         """)
         
-        # Get the top 20 most important features
         top_20_features = feature_importance_df.head(20)
-
-        # Plot as a bar chart
-        # We set the index to 'feature' so Streamlit uses it as the x-axis label
         st.bar_chart(top_20_features.set_index('feature')['importance'])
